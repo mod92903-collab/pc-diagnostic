@@ -14,10 +14,9 @@ try:
 except ImportError:
     psutil = None
 
-# إعدادات الصفحة
+# إعدادات الصفحة والتصميم الداكن المماثل للـ HTML
 st.set_page_config(page_title="ProofCheck - Evidence-led used-device inspection", page_icon="💻", layout="wide")
 
-# تخصيص التصميم (CSS) لتطابق واجهة الـ HTML الداكنة تماماً
 st.markdown("""
     <style>
     .stApp {
@@ -38,13 +37,13 @@ st.markdown("""
         border-radius: 8px;
         margin-bottom: 12px;
     }
-    h1, h2, h3 {
+    h1, h2, h3, h4 {
         color: #ffffff !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# رأس الصفحة مطابق للـ HTML
+# رأس الصفحة
 col_logo, col_title, col_ver = st.columns([1, 8, 2])
 with col_logo:
     st.markdown("### 🅿️")
@@ -56,9 +55,8 @@ with col_ver:
 
 st.markdown("---")
 
-# قسم المقدمة (Hero Section)
+# قسم المقدمة
 col_left, col_right = st.columns([7, 4])
-
 with col_left:
     st.markdown("""
     <div class="main-card">
@@ -67,12 +65,11 @@ with col_left:
     </div>
     """, unsafe_allow_html=True)
     
-    # أزرار التفاعل
-    b_col1, b_col2 = st.columns(2)
-    with b_col1:
-        run_inspection = st.button("Connect to local inspector", type="primary", use_container_width=True)
-    with b_col2:
-        refresh_info = st.button("Refresh device info", use_container_width=True)
+    b1, b2 = st.columns(2)
+    with b1:
+        st.button("Connect to local inspector", type="primary", use_container_width=True)
+    with b2:
+        st.button("Refresh device info", use_container_width=True)
         
     st.markdown("<p style='color: #10b981; font-size: 13px; margin-top: 10px;'>🟢 Connected to local inspector</p>", unsafe_allow_html=True)
 
@@ -88,22 +85,48 @@ with col_right:
     </div>
     """, unsafe_allow_html=True)
 
-# دوال جلب البيانات
+# دوال جلب البيانات الحقيقية من اللابتوب
 def get_device_identity():
     system = platform.system()
     if system == "Windows":
-        ps = r"$cs=Get-CimInstance Win32_ComputerSystem; $bios=Get-CimInstance Win32_BIOS; [PSCustomObject]@{manufacturer=$cs.Manufacturer; model=$cs.Model; serial_number=$bios.SerialNumber} | ConvertTo-Json -Compress"
+        ps = r"$cs=Get-CimInstance Win32_ComputerSystem; $bios=Get-CimInstance Win32_BIOS; [PSCustomObject]@{manufacturer=$cs.Manufacturer; model=$cs.Model; serial_number=$bios.SerialNumber; bios_date=if($bios.ReleaseDate){$bios.ReleaseDate.ToString('yyyy-MM-dd')}else{$null}} | ConvertTo-Json -Compress"
         try:
             raw = subprocess.check_output(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps], text=True, stderr=subprocess.DEVNULL, timeout=5)
-            return json.loads(raw.strip()) if raw.strip() else {}
+            res = json.loads(raw.strip()) if raw.strip() else {}
+            return {
+                "manufacturer": res.get("manufacturer", "N/A"),
+                "model": res.get("model", "N/A"),
+                "serial_number": res.get("serial_number", "N/A"),
+                "bios_date": res.get("bios_date", "N/A")
+            }
         except Exception:
             pass
-    return {"manufacturer": platform.system(), "model": platform.machine(), "serial_number": "N/A"}
+    return {"manufacturer": platform.system(), "model": platform.machine(), "serial_number": "N/A", "bios_date": "N/A"}
+
+def get_battery_info():
+    if psutil:
+        try:
+            b = psutil.sensors_battery()
+            if b:
+                plug_status = "Running on AC power" if b.power_plugged else "Running on battery"
+                return f"{b.percent}%", plug_status
+        except Exception:
+            pass
+    if platform.system() == "Windows":
+        try:
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Battery | Select-Object EstimatedChargeRemaining | ConvertTo-Json -Compress"], capture_output=True, text=True, timeout=3)
+            if out.stdout and out.stdout.strip() != "null":
+                data = json.loads(out.stdout.strip())
+                return f"{data.get('EstimatedChargeRemaining', 'N/A')}%", "Battery detected"
+        except Exception:
+            pass
+    return "Unavailable", "No battery info exposed"
 
 identity = get_device_identity()
 disk = shutil.disk_usage(os.path.expanduser("~"))
+battery_pct, battery_note = get_battery_info()
 
-# قسم معلومات الجهاز (Device Information)
+# معلومات النظام الأساسية
 st.markdown("""
 <div class="main-card">
     <h3>Device information</h3>
@@ -111,8 +134,8 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-d_col1, d_col2, d_col3 = st.columns(3)
-with d_col1:
+d1, d2, d3 = st.columns(3)
+with d1:
     st.markdown(f"""
     <div class="metric-card">
         <span style="color: #9ca3af; font-size: 12px;">Operating system</span>
@@ -120,7 +143,7 @@ with d_col1:
         <span style="color: #9ca3af; font-size: 12px;">{platform.release()} - {platform.machine()}</span>
     </div>
     """, unsafe_allow_html=True)
-with d_col2:
+with d2:
     cpu_count = os.cpu_count() or "N/A"
     st.markdown(f"""
     <div class="metric-card">
@@ -129,7 +152,7 @@ with d_col2:
         <span style="color: #9ca3af; font-size: 12px;">Active system threads</span>
     </div>
     """, unsafe_allow_html=True)
-with d_col3:
+with d3:
     mem_text = f"{round(psutil.virtual_memory().total / (1024**3), 1)} GB" if psutil else "N/A"
     mem_used = f"{psutil.virtual_memory().percent}% currently used" if psutil else "N/A"
     st.markdown(f"""
@@ -140,9 +163,8 @@ with d_col3:
     </div>
     """, unsafe_allow_html=True)
 
-# الصف الثاني من المعلومات
-d_col4, d_col5, d_col6 = st.columns(3)
-with d_col4:
+d4, d5, d6 = st.columns(3)
+with d4:
     free_disk = round(disk.free / (1024**3), 1)
     st.markdown(f"""
     <div class="metric-card">
@@ -151,15 +173,15 @@ with d_col4:
         <span style="color: #9ca3af; font-size: 12px;">Free in home-folder volume</span>
     </div>
     """, unsafe_allow_html=True)
-with d_col5:
+with d5:
     st.markdown(f"""
     <div class="metric-card">
-        <span style="color: #9ca3af; font-size: 12px;">Device Manufacturer</span>
-        <h3 style="margin: 5px 0; font-size: 18px;">{identity.get('manufacturer', 'N/A')}</h3>
-        <span style="color: #9ca3af; font-size: 12px;">{identity.get('model', 'N/A')}</span>
+        <span style="color: #9ca3af; font-size: 12px;">Battery charge</span>
+        <h2 style="margin: 5px 0;">{battery_pct}</h2>
+        <span style="color: #9ca3af; font-size: 12px;">{battery_note}</span>
     </div>
     """, unsafe_allow_html=True)
-with d_col6:
+with d6:
     st.markdown(f"""
     <div class="metric-card">
         <span style="color: #9ca3af; font-size: 12px;">Temperature sensors</span>
@@ -168,7 +190,35 @@ with d_col6:
     </div>
     """, unsafe_allow_html=True)
 
-# قسم اختبارات الأداء (Run real tests)
+# قسم تفاصيل الموديل والـ Serial Number (لمعرفة تغير القطع الداخلية)
+s1, s2, s3 = st.columns(3)
+with s1:
+    st.markdown(f"""
+    <div class="metric-card">
+        <span style="color: #9ca3af; font-size: 12px;">Device manufacturer / model</span>
+        <h4 style="margin: 5px 0; color: #60a5fa; font-size: 16px;">{identity.get('manufacturer')}</h4>
+        <p style="margin: 0; font-size: 13px; font-weight: bold;">{identity.get('model')}</p>
+        <span style="color: #9ca3af; font-size: 11px;">Hardware model reported by the OS</span>
+    </div>
+    """, unsafe_allow_html=True)
+with s2:
+    st.markdown(f"""
+    <div class="metric-card">
+        <span style="color: #9ca3af; font-size: 12px;">Serial number</span>
+        <h4 style="margin: 5px 0; color: #f87171; font-size: 16px;">{identity.get('serial_number')}</h4>
+        <span style="color: #9ca3af; font-size: 11px;">Sensitive identifier — do not share publicly</span>
+    </div>
+    """, unsafe_allow_html=True)
+with s3:
+    st.markdown(f"""
+    <div class="metric-card">
+        <span style="color: #9ca3af; font-size: 12px;">BIOS release date</span>
+        <h4 style="margin: 5px 0; font-size: 16px;">{identity.get('bios_date')}</h4>
+        <span style="color: #9ca3af; font-size: 11px;">This is the BIOS firmware release date.</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+# قسم الاختبارات الفورية
 st.markdown("""
 <div class="main-card">
     <h3>Run real tests</h3>
@@ -176,14 +226,14 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-t_col1, t_col2, t_col3, t_col4 = st.columns(4)
-with t_col1:
+t1, t2, t3, t4 = st.columns(4)
+with t1:
     run_all = st.button("Run all tests", type="primary", use_container_width=True)
-with t_col2:
+with t2:
     run_cpu = st.button("CPU only", use_container_width=True)
-with t_col3:
+with t3:
     run_mem = st.button("Memory only", use_container_width=True)
-with t_col4:
+with t4:
     run_disk = st.button("Storage speed only", use_container_width=True)
 
 if run_all or run_disk:
@@ -219,17 +269,16 @@ if run_all or run_disk:
             st.markdown(f"""
             <div class="metric-card" style="border-color: #3b82f6;">
                 <h4>Temporary-file storage speed</h4>
-                <p style="font-size: 20px; font-weight: bold; color: #60a5fa;">Write {w_speed} / Read {r_speed} MiB/s</p>
-                <span style="color: #9ca3af; font-size: 12px;">Short buffered throughput sample only. Results vary with cache and system state.</span>
+                <p style="font-size: 18px; font-weight: bold; color: #60a5fa;">Write {w_speed} / Read {r_speed} MiB/s</p>
+                <span style="color: #9ca3af; font-size: 12px;">Short buffered throughput sample only.</span>
             </div>
             """, unsafe_allow_html=True)
         except Exception as e:
-            st.error(f"Error during test: {e}")
+            st.error(f"Error: {e}")
         finally:
             if path and os.path.exists(path):
                 os.remove(path)
 
-# تنبيه الأمان أسفل الصفحة
 st.markdown("""
 <div style="background-color: #451a03; border: 1px solid #78350f; padding: 12px; border-radius: 8px; margin-top: 20px;">
     <span style="color: #fbbf24; font-size: 13px;"><b>Safety & accuracy:</b> These short tests do not certify a laptop as good or bad. They do not fully test RAM for errors or diagnose every SSD fault.</span>
